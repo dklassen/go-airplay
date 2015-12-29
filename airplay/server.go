@@ -2,11 +2,14 @@ package airplay
 
 import (
 	"encoding/hex"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
 	"strconv"
+
+	"github.com/oleksandr/bonjour"
 )
 
 // Debug logger - main can reach in an enable this if it wants
@@ -27,51 +30,44 @@ var txt map[string]string = map[string]string{
 	"et":      "0,1",
 }
 
-// ServeAirtunes will start advertising an RAOP service, and start listening for
-// incoming connections, calling the player in a new goroutine when appropriate.
-func ServeAirTunes(name string, handler func(string, net.Conn)) error {
-	address := ":49152"
-	ifacename := "en1"
+func RegisterAirTunes(name, address string) (*bonjour.Server, error) {
+	ifacename := "en0"
 
-	// Try to grab publish information
 	_, portstr, err := net.SplitHostPort(address)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	port, err := strconv.Atoi(portstr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	iface, err := net.InterfaceByName(ifacename)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Publish the service
 	raopName := hex.EncodeToString(iface.HardwareAddr) + "@" + name
-	err = ServiceRegister(raopName, "_raop._tcp", txt, uint16(port))
-	if err != nil {
-		return err
+	keys := make([]string, 0, len(txt))
+	for key, value := range txt {
+		keys = append(keys, fmt.Sprintf("%s=%s", key, value))
 	}
-	defer ServiceDeregister()
-	log.Println("Service", raopName, "registered on address", address)
 
-	// Bind the port
-	ln, err := net.Listen("tcp", address)
+	s, err := bonjour.Register(raopName, "_raop._tcp", "", port, keys, nil)
 	if err != nil {
-		return err
+		log.Fatalln(err.Error())
 	}
-	defer ln.Close()
+	return s, nil
+}
+
+func ServeAirTunes(name, address string, listener net.Listener, handler func(string, net.Conn)) error {
 	log.Println("Listening for connections on address", address)
 
-	// Listen for incoming
 	for {
 		id := strconv.Itoa(rand.Int())
-		conn, err := ln.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			return err
 		}
 		go handler(id, conn)
 	}
 }
-
